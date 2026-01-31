@@ -6,36 +6,31 @@ const logFormat = printf(({ level, message, timestamp, stack }) => {
     return `${timestamp} [${level}]: ${stack || message}`;
 });
 
+// In production (Cloud Run), use JSON format for better structured logging
+const productionFormat = combine(
+    errors({ stack: true }),
+    timestamp(),
+    winston.format.json()
+);
+
+const developmentFormat = combine(
+    colorize(),
+    errors({ stack: true }),
+    timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    logFormat
+);
+
 export const logger = winston.createLogger({
     level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
-    format: combine(
+    format: process.env.NODE_ENV === 'production' ? productionFormat : combine(
         errors({ stack: true }),
         timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
         logFormat
     ),
     transports: [
         new winston.transports.Console({
-            format: combine(
-                colorize(),
-                errors({ stack: true }),
-                timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-                logFormat
-            ),
+            format: process.env.NODE_ENV === 'production' ? productionFormat : developmentFormat,
         }),
     ],
 });
 
-// Add file transport in production
-if (process.env.NODE_ENV === 'production') {
-    logger.add(
-        new winston.transports.File({
-            filename: 'logs/error.log',
-            level: 'error'
-        })
-    );
-    logger.add(
-        new winston.transports.File({
-            filename: 'logs/combined.log'
-        })
-    );
-}
