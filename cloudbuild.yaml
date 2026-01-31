@@ -1,0 +1,44 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-docker.pkg.dev/${PROJECT_ID}/code-companion/backend:${COMMIT_SHA}'
+      - '-t'
+      - 'us-docker.pkg.dev/${PROJECT_ID}/code-companion/backend:latest'
+      - '.'
+
+  # Push the image with commit SHA tag
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-docker.pkg.dev/${PROJECT_ID}/code-companion/backend:${COMMIT_SHA}'
+
+  # Push the image with latest tag
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-docker.pkg.dev/${PROJECT_ID}/code-companion/backend:latest'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'code-companion-backend'
+      - '--image'
+      - 'us-docker.pkg.dev/${PROJECT_ID}/code-companion/backend:${COMMIT_SHA}'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+
+images:
+  - 'us-docker.pkg.dev/${PROJECT_ID}/code-companion/backend:${COMMIT_SHA}'
+  - 'us-docker.pkg.dev/${PROJECT_ID}/code-companion/backend:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
