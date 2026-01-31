@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { handleWebhook, ingestData, syncPRs, getSyncStatus, listSyncJobs, triggerWebhook } from '../controllers/githubController.js';
+import { handleWebhook, ingestData, syncPRs, getSyncStatus, listSyncJobs, triggerWebhook, streamSyncStatus } from '../controllers/githubController.js';
 
 const router = Router();
 
@@ -32,6 +32,12 @@ router.get('/sync/status/:jobId', getSyncStatus);
  * Get recent sync jobs
  */
 router.get('/sync/jobs', listSyncJobs);
+
+/**
+ * GET /api/github/sync/stream/:jobId
+ * SSE endpoint for real-time sync status updates
+ */
+router.get('/sync/stream/:jobId', streamSyncStatus);
 
 /**
  * POST /api/github/trigger-webhook

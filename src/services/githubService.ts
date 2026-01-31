@@ -624,11 +624,12 @@ export async function syncRepoPRs(
     owner: string,
     repo: string,
     limit = 0
-): Promise<{ processed: number; skipped: number; errors: string[]; stoppedEarly: boolean; message: string }> {
+): Promise<{ processed: number; updated: number; skipped: number; errors: string[]; stoppedEarly: boolean; message: string }> {
     const fetchAll = limit === 0;
     logger.info(`Syncing PRs for ${owner}/${repo} (limit: ${fetchAll ? 'ALL' : limit})`);
     
     let processed = 0;
+    let updated = 0;
     let skipped = 0;
     const errors: string[] = [];
     let page = 1;
@@ -665,12 +666,21 @@ export async function syncRepoPRs(
                         repoUrl: repoUrl 
                     });
 
-                    if (existing) {
-                        logger.debug(`PR #${pr.number} already synced, skipping`);
+                    // Compare timestamps to see if the PR has been updated
+                    const prUpdatedAt = new Date(pr.updated_at);
+                    const needsUpdate = !existing || 
+                        (existing.updatedAt && prUpdatedAt > existing.updatedAt) ||
+                        // Also check if merged status changed
+                        (pr.merged_at && existing?.state !== 'merged');
+
+                    if (existing && !needsUpdate) {
+                        logger.debug(`PR #${pr.number} already synced and up-to-date, skipping`);
                         skipped++;
                         pageSkipped++;
                         continue;
                     }
+
+                    const isUpdate = existing && needsUpdate;
 
                     // Fetch files for this PR, including diffs
                     const files = await fetchPRFiles(owner, repo, pr.number);
@@ -700,7 +710,12 @@ export async function syncRepoPRs(
                     };
 
                     await ingestPR(ingestionData);
-                    processed++;
+                    if (isUpdate) {
+                        updated++;
+                        logger.info(`PR #${pr.number} updated (was ${existing?.state}, now ${pr.merged_at ? 'merged' : pr.state})`);
+                    } else {
+                        processed++;
+                    }
                     
                     // Log progress every 10 PRs
                     if (processed % 10 === 0) {
@@ -736,16 +751,17 @@ export async function syncRepoPRs(
 
         // Build summary message
         let message = '';
-        if (processed === 0 && skipped > 0) {
-            message = `All ${skipped} PRs are already synced. No new PRs to process.`;
+        const totalProcessed = processed + updated;
+        if (totalProcessed === 0 && skipped > 0) {
+            message = `All ${skipped} PRs are already synced and up-to-date. No new or updated PRs to process.`;
         } else if (stoppedEarly) {
-            message = `Synced ${processed} new PRs, skipped ${skipped} already synced. Stopped early as remaining PRs are already synced.`;
+            message = `Synced ${processed} new PRs, updated ${updated} PRs, skipped ${skipped} already synced. Stopped early as remaining PRs are already synced.`;
         } else {
-            message = `Synced ${processed} PRs, skipped ${skipped} already synced.`;
+            message = `Synced ${processed} new PRs, updated ${updated} PRs, skipped ${skipped} unchanged.`;
         }
 
-        logger.info(`Sync complete: ${processed} PRs processed, ${skipped} skipped, ${errors.length} errors`);
-        return { processed, skipped, errors, stoppedEarly, message };
+        logger.info(`Sync complete: ${processed} new PRs, ${updated} updated, ${skipped} skipped, ${errors.length} errors`);
+        return { processed, updated, skipped, errors, stoppedEarly, message };
     } catch (error) {
         throw error;
     }

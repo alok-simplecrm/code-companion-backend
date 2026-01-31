@@ -9,6 +9,7 @@ import {
     triggerPRWebhook
 } from '../services/githubService.js';
 import { startSyncJob, getSyncJob, getRecentSyncJobs } from '../services/syncJobService.js';
+import { syncEventEmitter } from '../services/syncEventEmitter.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -298,4 +299,73 @@ export async function triggerWebhook(req: Request, res: Response, next: NextFunc
         }
         next(error);
     }
+}
+
+/**
+ * GET /api/github/sync/stream/:jobId
+ * Server-Sent Events (SSE) endpoint for real-time sync status updates
+ */
+export async function streamSyncStatus(req: Request, res: Response) {
+    const jobId = req.params.jobId as string;
+    
+    // Check if job exists
+    const job = getSyncJob(jobId);
+    if (!job) {
+        res.status(404).json({
+            success: false,
+            error: 'Job not found',
+        });
+        return;
+    }
+    
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
+    
+    logger.info(`SSE connection established for job ${jobId}`);
+    
+    // Send initial status
+    const sendEvent = (data: any) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+    
+    // Send current job status immediately
+    sendEvent({
+        type: job.status === 'completed' ? 'completed' : job.status === 'failed' ? 'failed' : 'status',
+        id: job.id,
+        owner: job.owner,
+        repo: job.repo,
+        status: job.status,
+        progress: job.progress,
+        message: job.message,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+    });
+    
+    // If job is already finished, close connection
+    if (job.status === 'completed' || job.status === 'failed') {
+        res.end();
+        return;
+    }
+    
+    // Listen for job updates
+    const eventHandler = (data: any) => {
+        sendEvent(data);
+        
+        // Close connection when job is done
+        if (data.type === 'completed' || data.type === 'failed') {
+            res.end();
+        }
+    };
+    
+    syncEventEmitter.on(`job:${jobId}`, eventHandler);
+    
+    // Clean up on client disconnect
+    req.on('close', () => {
+        logger.info(`SSE connection closed for job ${jobId}`);
+        syncEventEmitter.off(`job:${jobId}`, eventHandler);
+    });
 }

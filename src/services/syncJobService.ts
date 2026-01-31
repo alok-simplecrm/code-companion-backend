@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { syncRepoPRs } from './githubService.js';
 import { logger } from '../utils/logger.js';
 import { AllowedRepo } from '../models/index.js';
+import { syncEventEmitter } from './syncEventEmitter.js';
 
 export interface SyncJob {
     id: string;
@@ -11,6 +12,7 @@ export interface SyncJob {
     status: 'pending' | 'running' | 'completed' | 'failed';
     progress: {
         processed: number;
+        updated: number;
         skipped: number;
         errors: string[];
     };
@@ -51,6 +53,7 @@ export function startSyncJob(owner: string, repo: string, limit: number = 0): Sy
         status: 'pending',
         progress: {
             processed: 0,
+            updated: 0,
             skipped: 0,
             errors: [],
         },
@@ -97,17 +100,40 @@ async function runSyncInBackground(job: SyncJob): Promise<void> {
     job.status = 'running';
     logger.info(`[SyncJob ${job.id}] Starting sync for ${job.owner}/${job.repo}`);
     
+    // Emit job started event
+    syncEventEmitter.emitJobStarted(job.id, {
+        id: job.id,
+        owner: job.owner,
+        repo: job.repo,
+        status: job.status,
+        progress: job.progress,
+        startedAt: job.startedAt,
+    });
+    
     try {
         const result = await syncRepoPRs(job.owner, job.repo, job.limit);
         
         job.progress = {
             processed: result.processed,
+            updated: result.updated,
             skipped: result.skipped,
             errors: result.errors,
         };
         job.message = result.message;
         job.status = 'completed';
         job.completedAt = new Date();
+        
+        // Emit job completed event
+        syncEventEmitter.emitJobCompleted(job.id, {
+            id: job.id,
+            owner: job.owner,
+            repo: job.repo,
+            status: job.status,
+            progress: job.progress,
+            message: job.message,
+            startedAt: job.startedAt,
+            completedAt: job.completedAt,
+        });
         
         // Update the allowed repo's lastSyncedAt and prCount
         try {
@@ -128,6 +154,18 @@ async function runSyncInBackground(job: SyncJob): Promise<void> {
         job.completedAt = new Date();
         job.message = error instanceof Error ? error.message : 'Sync failed';
         job.progress.errors.push(job.message);
+        
+        // Emit job failed event
+        syncEventEmitter.emitJobFailed(job.id, {
+            id: job.id,
+            owner: job.owner,
+            repo: job.repo,
+            status: job.status,
+            progress: job.progress,
+            message: job.message,
+            startedAt: job.startedAt,
+            completedAt: job.completedAt,
+        });
         
         logger.error(`[SyncJob ${job.id}] Failed:`, error);
     }
