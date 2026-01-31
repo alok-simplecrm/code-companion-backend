@@ -23,7 +23,7 @@ export function createApp() {
     // CORS configuration
     const allowedOrigins = [
         env.FRONTEND_URL,
-        "https://pr-analyser.web.app/",
+        "https://pr-analyser.web.app",
         'http://localhost:8080',
         'http://127.0.0.1:8080',
         'http://localhost:3000',
