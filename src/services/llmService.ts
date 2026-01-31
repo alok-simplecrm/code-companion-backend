@@ -239,7 +239,14 @@ ${ticketContext}
 }
 
 function getSystemPrompt(): string {
-    return `You are a senior software engineer analyzing bug reports and errors. Based on the user's input and the semantically matched code changes from the repository, provide a comprehensive analysis.
+    return `You are a friendly and helpful senior software engineer named "CodeCompanion". You're analyzing bug reports and errors for a developer. Based on the user's input and the semantically matched code changes from the repository, provide a comprehensive analysis.
+
+## Your Personality:
+- Be warm, encouraging, and conversational - like a helpful colleague
+- Use "I" and speak directly to the user with "you"
+- Be empathetic about their frustration with bugs
+- Celebrate when you find solutions
+- Use casual but professional language
 
 ## Analysis Guidelines:
 1. **Analyze Git Diffs**: When diff content is provided, examine the actual code changes to understand:
@@ -261,6 +268,7 @@ Your response MUST be valid JSON with this exact structure:
   "summary": "Brief one-sentence summary",
   "rootCause": "Technical explanation of the root cause, referencing specific code patterns from diffs if available",
   "explanation": "Detailed explanation in simple terms for junior developers",
+  "conversationalResponse": "A friendly, conversational response written in Markdown that speaks directly to the user like ChatGPT would. Start with a greeting or acknowledgment of their issue. Explain what you found in a natural, helpful way. Reference specific PRs by number if relevant (e.g., 'I found that PR #123 addressed a similar issue...'). Provide clear next steps. Use formatting like **bold**, bullet points, and code blocks where helpful. End with an encouraging note or offer to help further. This should be 2-4 paragraphs, warm and human-like.",
   "diffAnalysis": "Analysis of what the matched PRs changed and WHY those changes fixed the issue. If diffs are provided, explain the specific code changes.",
   "bestPractices": ["List of coding best practices demonstrated in the matched PRs that help prevent this type of issue"],
   "relatedPRs": [
@@ -310,7 +318,15 @@ Your response MUST be valid JSON with this exact structure:
   } | null
 }
 
-If no matching PRs/commits exist, set status to "unknown" and provide a suggested fix based on the error description. Always include diffAnalysis and bestPractices fields.`;
+IMPORTANT: The "conversationalResponse" field is what the user will read first. Make it:
+- Personal and friendly (use "I found...", "Based on my analysis...", "Here's what I think...")
+- Reference specific PRs by number when relevant
+- Include practical next steps they can take
+- Use Markdown formatting for readability
+- Feel like a chat with a helpful colleague, not a report
+- **Respct User Quantity**: If the user asked for a specific number of items (e.g. "top 10 PRs"), try to list or mention that many if available.
+
+If no matching PRs/commits exist, acknowledge this honestly in the conversational response and still try to help based on the error description. Always include diffAnalysis and bestPractices fields.`;
 }
 
 function getStreamingSystemPrompt(): string {
@@ -351,13 +367,43 @@ function buildFallbackAnalysis(
     matchedCommits: MatchedCommit[],
     matchedTickets: MatchedTicket[]
 ): IAnalysisResult {
+    const hasSomeMatches = matchedPRs.length > 0 || matchedCommits.length > 0;
+    
+    let conversationalResponse = `Hey there! 👋 
+
+I looked through the codebase for anything related to your issue, but I wasn't able to find a definitive match. `;
+    
+    if (hasSomeMatches) {
+        conversationalResponse += `I did find ${matchedPRs.length} potentially related PRs and ${matchedCommits.length} commits that might give you some clues.
+
+**What I suggest:**
+- Take a look at the related PRs I've listed below - they might have patterns that help
+- Check recent commits in the modules where you're seeing this issue
+- Try adding some debug logging to narrow down where things are going wrong
+
+I know it's frustrating when you can't find a clear answer, but you've got this! Let me know if you'd like me to dig deeper into any specific area. 💪`;
+    } else {
+        conversationalResponse += `This could mean:
+- The issue is new and hasn't been addressed in any previous PRs
+- The relevant code changes haven't been synced yet
+- The issue might be in a different area than where I searched
+
+**Here's what you can try:**
+1. Make sure your repository is fully synced with recent PRs
+2. Search the codebase manually for similar error patterns
+3. Add some debug logging to help pinpoint the issue
+
+Don't give up! Sometimes bugs just need a fresh set of eyes. Let me know if you'd like to try a different search approach. 🔍`;
+    }
+
     return {
         status: 'unknown',
         confidence: 0.3,
         summary: 'Unable to determine if this issue has been fixed.',
         rootCause: 'Analysis inconclusive. The error pattern could not be matched to existing code changes.',
         explanation: 'We analyzed the error but could not find definitive matches in the codebase. This could mean the issue is new or the relevant code changes are not yet indexed.',
-        relatedPRs: matchedPRs.slice(0, 5).map(pr => ({
+        conversationalResponse,
+        relatedPRs: matchedPRs.map(pr => ({
             prNumber: pr.prNumber,
             title: pr.title,
             author: pr.author,
@@ -366,7 +412,7 @@ function buildFallbackAnalysis(
             relevanceScore: pr.similarity,
             filesImpacted: pr.filesChanged?.map(f => f.path) || [],
         })),
-        relatedCommits: matchedCommits.slice(0, 5).map(c => ({
+        relatedCommits: matchedCommits.map(c => ({
             sha: c.sha,
             message: c.message,
             author: c.author,
@@ -374,7 +420,7 @@ function buildFallbackAnalysis(
             committedAt: c.committedAt.toISOString(),
             filesChanged: c.filesChanged?.map(f => f.path) || [],
         })),
-        relatedTickets: matchedTickets.slice(0, 5).map(t => ({
+        relatedTickets: matchedTickets.map(t => ({
             key: t.ticketKey,
             title: t.title,
             status: t.status,
