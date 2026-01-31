@@ -9,6 +9,7 @@ export interface IAnalysisResult {
     summary: string;
     rootCause: string;
     explanation: string;
+    conversationalResponse: string; // ChatGPT-like conversational response for the user
     diffAnalysis?: string;
     bestPractices?: string[];
     relatedPRs: Array<{

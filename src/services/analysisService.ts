@@ -3,6 +3,42 @@ import { generateEmbedding, cosineSimilarity } from './embeddingService.js';
 import { analyzeWithLLM } from './llmService.js';
 import { logger } from '../utils/logger.js';
 
+export interface DataAvailability {
+    hasData: boolean;
+    prCount: number;
+    commitCount: number;
+    ticketCount: number;
+    message: string;
+}
+
+/**
+ * Check if there's any data available for analysis
+ */
+export async function checkDataAvailability(): Promise<DataAvailability> {
+    const [prCount, commitCount, ticketCount] = await Promise.all([
+        GitHubPR.countDocuments({ embedding: { $exists: true, $ne: [] } }),
+        GitHubCommit.countDocuments({ embedding: { $exists: true, $ne: [] } }),
+        JiraTicket.countDocuments({ embedding: { $exists: true, $ne: [] } }),
+    ]);
+
+    const hasData = prCount > 0 || commitCount > 0 || ticketCount > 0;
+    
+    let message = '';
+    if (!hasData) {
+        message = 'No data has been synced yet. Please sync a GitHub repository first to enable AI-powered analysis. Go to Settings > Repositories to add and sync your first repository.';
+    } else {
+        message = `Ready for analysis. Database contains ${prCount} PRs, ${commitCount} commits, and ${ticketCount} tickets.`;
+    }
+
+    return {
+        hasData,
+        prCount,
+        commitCount,
+        ticketCount,
+        message,
+    };
+}
+
 export interface AnalysisRequest {
     inputText: string;
     inputType: InputType;
@@ -24,11 +60,22 @@ export async function analyzeError(request: AnalysisRequest): Promise<IAnalysisR
     const queryEmbedding = await generateEmbedding(inputText);
     logger.debug(`Generated query embedding with ${queryEmbedding.length} dimensions`);
 
+    // Detect if user requested a specific number of items
+    const match = inputText.match(/(\d+)\s*(?:prs?|pull requests?|commits?|items?|results?)/i);
+    let limit = 10; // Default limit
+    if (match) {
+        const requestedLimit = parseInt(match[1]);
+        if (requestedLimit > 0 && requestedLimit <= 50) { // Cap at 50 to prevent overload
+            limit = requestedLimit;
+            logger.info(`User requested ${limit} items`);
+        }
+    }
+
     // Step 2: Search for similar items in parallel
     const [prs, commits, tickets] = await Promise.all([
-        searchSimilarPRs(queryEmbedding),
-        searchSimilarCommits(queryEmbedding),
-        searchSimilarTickets(queryEmbedding),
+        searchSimilarPRs(queryEmbedding, 0.3, limit),
+        searchSimilarCommits(queryEmbedding, 0.3, limit),
+        searchSimilarTickets(queryEmbedding, 0.3, Math.min(limit, 10)), // Keep tickets lower
     ]);
 
     logger.info(`Found ${prs.length} PRs, ${commits.length} commits, ${tickets.length} tickets`);
