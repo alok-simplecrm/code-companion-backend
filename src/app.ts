@@ -23,6 +23,7 @@ export function createApp() {
     // CORS configuration
     const allowedOrigins = [
         env.FRONTEND_URL,
+        "https://code-companion-backend-842944963608.asia-southeast1.run.app/",
         'http://localhost:8080',
         'http://127.0.0.1:8080',
         'http://localhost:3000',
