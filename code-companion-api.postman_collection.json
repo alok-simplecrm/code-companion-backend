@@ -1,0 +1,307 @@
+{
+	"info": {
+		"_postman_id": "code-companion-api-v1",
+		"name": "Code Companion API",
+		"description": "API collection for Code Companion AI Backend",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "System",
+			"item": [
+				{
+					"name": "Root Info",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								""
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/health",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"health"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "System Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/stats",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"stats"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Analysis",
+			"item": [
+				{
+					"name": "Analyze Error",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"inputText\": \"Error: Cannot read property 'map' of undefined\",\n    \"inputType\": \"error\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/analyze",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"analyze"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Recent Analyses",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/analyze/recent?limit=10",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"analyze",
+								"recent"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "10"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Issues",
+			"item": [
+				{
+					"name": "Submit Issue",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"title\": \"Application crashes on startup\",\n    \"description\": \"When I run npm start, the application crashes immediately with a module not found error.\",\n    \"inputType\": \"description\",\n    \"userId\": \"user_123\",\n    \"email\": \"user@example.com\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/issues",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"issues"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Issues",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/issues?limit=20&status=pending",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"issues"
+							],
+							"query": [
+								{
+									"key": "limit",
+									"value": "20"
+								},
+								{
+									"key": "offset",
+									"value": "0",
+									"disabled": true
+								},
+								{
+									"key": "status",
+									"value": "pending"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Issue Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/issues/stats",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"issues",
+								"stats"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Issue By ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/issues/:issueId",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"issues",
+								":issueId"
+							],
+							"variable": [
+								{
+									"key": "issueId",
+									"value": "REPLACE_WITH_ISSUE_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "GitHub",
+			"item": [
+				{
+					"name": "Sync PRs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"owner\": \"simplecrm-projects\",\n    \"repo\": \"simplecrm_v300_new\",\n    \"limit\": 5\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/github/sync/prs",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"github",
+								"sync",
+								"prs"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Manual Ingest (PR)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"type\": \"pr\",\n    \"data\": {\n        \"prNumber\": 101,\n        \"title\": \"Fix null pointer exception\",\n        \"description\": \"Fixed the NPE in the auth service.\",\n        \"author\": \"developer\",\n        \"repoUrl\": \"https://github.com/example/repo\",\n        \"prUrl\": \"https://github.com/example/repo/pull/101\",\n        \"mergedAt\": \"2023-01-01T12:00:00Z\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/github/ingest",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"github",
+								"ingest"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:3000",
+			"type": "string"
+		}
+	]
+}
