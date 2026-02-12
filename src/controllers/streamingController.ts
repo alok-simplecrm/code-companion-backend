@@ -2,13 +2,14 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { generateEmbedding } from '../services/embeddingService.js';
 import { searchSimilarPRs, searchSimilarCommits, searchSimilarTickets } from '../services/analysisService.js';
-import { analyzeWithLLMStream } from '../services/llmService.js';
 import { logger } from '../utils/logger.js';
+import { createAgent, saveToHistory, getHistory } from '../services/graphService.js';
 import type { IAnalysisResult } from '../models/index.js';
 
 const analyzeSchema = z.object({
     inputText: z.string().min(1, 'Input text is required'),
     inputType: z.enum(['error', 'stack_trace', 'jira_ticket', 'github_issue', 'description']),
+    conversationId: z.string().optional(),
     messages: z.array(z.object({
         role: z.enum(['user', 'model']),
         parts: z.array(z.object({ text: z.string() }))
@@ -33,7 +34,7 @@ export async function analyzeStream(req: Request, res: Response) {
             'Connection': 'keep-alive',
         });
 
-        const sendEvent = (event: string, data: any) => {
+        const yieldEvent = (event: string, data: any) => {
             res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
 
@@ -46,13 +47,13 @@ export async function analyzeStream(req: Request, res: Response) {
         // Strategy: Always search if query > 10 chars? Or just search always for now to provide context.
         // Actually, searching every time adds context which is good.
         
-        sendEvent('stage', { stage: 'thinking', message: 'Understanding your query...' });
+        yieldEvent('stage', { stage: 'thinking', message: 'Understanding your query...' });
 
         // Generate embedding
         const queryEmbedding = await generateEmbedding(inputText);
 
         // 2. Searching Stage
-        sendEvent('stage', { stage: 'searching', message: 'Checking codebase...' });
+        yieldEvent('stage', { stage: 'searching', message: 'Checking codebase...' });
         
         [prs, commits, tickets] = await Promise.all([
             searchSimilarPRs(queryEmbedding),
@@ -60,7 +61,7 @@ export async function analyzeStream(req: Request, res: Response) {
             searchSimilarTickets(queryEmbedding),
         ]);
 
-        sendEvent('stage', { 
+        yieldEvent('stage', { 
             stage: 'searching', 
             message: `Found ${prs.length} PRs, ${commits.length} commits` 
         });
@@ -76,11 +77,15 @@ export async function analyzeStream(req: Request, res: Response) {
             relatedPRs: prs.map(pr => ({
                 prNumber: pr.prNumber,
                 title: pr.title,
+                description: pr.description,
                 author: pr.author,
                 url: pr.prUrl,
                 mergedAt: pr.mergedAt?.toISOString(),
                 relevanceScore: pr.similarity,
                 filesImpacted: pr.filesChanged?.map((f: any) => f.path) || [],
+                filesChanged: pr.filesChanged || [],
+                diffContent: pr.diffContent,
+                labels: pr.labels || [],
                 whyRelevant: pr.similarity > 0.6 ? 'High similarity match' : undefined
             })),
             relatedCommits: commits.map(c => ({
@@ -101,21 +106,48 @@ export async function analyzeStream(req: Request, res: Response) {
             filesImpacted: [],
         };
 
-        sendEvent('result', partialResult);
+        yieldEvent('result', partialResult);
 
         // 4. Analyzing Stage
-        sendEvent('stage', { stage: 'analyzing', message: 'Generating response...' });
+        yieldEvent('stage', { stage: 'analyzing', message: 'Generating response...' });
 
-        // 5. Stream LLM Content
-        // We cast messages key slightly if needed, but the structure matches
-        const stream = analyzeWithLLMStream(inputText, inputType, prs, commits, tickets, messages as any);
+        // 5. Stream LLM Content using LangGraph Agent
+        const agent = createAgent();
+        const convoId = validatedBody.conversationId || `convo-${Date.now()}`;
+        
+        // Save user message to history
+        await saveToHistory(convoId, 'user', inputText);
+        
+        // Fetch full history for better context
+        const history = await getHistory(convoId);
 
-        for await (const chunk of stream) {
-            sendEvent('content', { chunk });
+        let fullResponse = '';
+        const stream = await agent.stream({
+            messages: history.map(m => ({ 
+                role: m.role === 'model' ? 'assistant' : 'user', 
+                content: m.content 
+            }))
+        });
+
+        for await (const update of stream) {
+            // LangGraph stream updates can be complex, we look for the last message in 'analyze' node
+            if (update.analyze?.messages) {
+                const lastMsg = update.analyze.messages[update.analyze.messages.length - 1];
+                const text = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
+                // Since this is a simple implementation, we might need to delta the text or handle incremental properly
+                // For now, if it's the final message, we yield it in chunks if possible, 
+                // but usually LangGraph ChatGoogleGenerativeAI handles streaming internally if configured.
+                // Here we'll just yield what we get.
+                yieldEvent('content', { chunk: text });
+                fullResponse = text;
+            }
         }
 
+        // Save AI response to history
+        await saveToHistory(convoId, 'model', fullResponse);
+
         // 6. Complete
-        sendEvent('complete', {});
+        yieldEvent('complete', {});
         res.end();
 
     } catch (error) {

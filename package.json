@@ -21,6 +21,10 @@
     "license": "MIT",
     "dependencies": {
         "@google/generative-ai": "^0.21.0",
+        "@langchain/community": "^1.1.15",
+        "@langchain/core": "^1.1.24",
+        "@langchain/google-genai": "^2.1.18",
+        "@langchain/langgraph": "^1.1.4",
         "cors": "^2.8.5",
         "dotenv": "^16.4.7",
         "express": "^4.21.2",

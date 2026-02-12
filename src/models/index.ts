@@ -10,4 +10,7 @@ export {
 } from './AnalysisQuery.js';
 export { Issue, type IIssue, type IMatchedPR } from './Issue.js';
 export { AllowedRepo, type IAllowedRepo, parseGitHubUrl } from './AllowedRepo.js';
+export { ProjectProfile, type IProjectProfile } from './ProjectProfile.js';
+export { Conversation, type IConversation, type IMessage } from './Conversation.js';
+export { CodebaseNode, type ICodebaseNode } from './CodebaseNode.js';
 

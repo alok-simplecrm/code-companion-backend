@@ -191,4 +191,31 @@ router.patch('/:id/sync', async (req: Request, res: Response, next: NextFunction
     }
 });
 
+/**
+ * GET /api/repos/pr-diff
+ * Fetch raw PR diff from GitHub on-demand
+ */
+router.get('/pr-diff', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { owner, repo, prNumber } = req.query;
+        
+        if (!owner || !repo || !prNumber) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required parameters: owner, repo, prNumber',
+            });
+        }
+        
+        const { fetchPRDiffRaw } = await import('../services/githubService.js');
+        const diff = await fetchPRDiffRaw(owner as string, repo as string, parseInt(prNumber as string));
+        
+        res.json({
+            success: true,
+            data: diff,
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
 export default router;

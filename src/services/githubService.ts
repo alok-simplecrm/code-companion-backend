@@ -53,6 +53,7 @@ interface GitHubPRPayload {
 }
 
 interface GitHubPushPayload {
+    ref: string;
     commits: Array<{
         id: string;
         message: string;
@@ -69,6 +70,7 @@ interface GitHubPushPayload {
     repository: {
         full_name: string;
         html_url: string;
+        default_branch: string;
     };
 }
 
@@ -80,9 +82,9 @@ export async function handlePullRequestEvent(payload: GitHubPRPayload): Promise<
 
     logger.info(`Processing PR event: ${action} for PR #${pr.number}`);
 
-    // Only process relevant actions
-    if (!['opened', 'closed', 'reopened', 'edited', 'synchronize'].includes(action)) {
-        logger.debug(`Skipping action: ${action}`);
+    // STRICT FILTER: Only process merged PRs
+    if (!pr.merged) {
+        logger.info(`Skipping non-merged PR #${pr.number} (state: ${pr.state}, action: ${action})`);
         return { processed: 0, errors: [] };
     }
 
@@ -109,7 +111,7 @@ export async function handlePullRequestEvent(payload: GitHubPRPayload): Promise<
                 .filter(f => f.patch)
                 .map(f => `File: ${f.filename}\n${f.patch}`)
                 .join('\n\n')
-                .slice(0, 8000); // 8kb limit for diff text
+                .slice(0, 16000); // 16kb limit for RAG context (enough for AI analysis)
         } catch (e) {
             logger.warn(`Could not fetch files for PR #${pr.number}: ${e instanceof Error ? e.message : 'Unknown'}`);
         }
@@ -120,21 +122,13 @@ export async function handlePullRequestEvent(payload: GitHubPRPayload): Promise<
             pr.body || '',
             `Author: ${pr.user.login}`,
             `Repository: ${repo.full_name}`,
-            pr.merged ? 'Status: Merged' : pr.state === 'closed' ? 'Status: Closed' : 'Status: Open',
+            'Status: Merged',
             `Labels: ${pr.labels.map(l => l.name).join(', ')}`,
             filesChanged.length > 0 ? `Files changed: ${filesChanged.map(f => f.path).join(', ')}` : '',
             diffContent,
         ].filter(Boolean).join('\n');
 
         const embedding = await generateEmbedding(searchText);
-
-        // Determine PR state
-        let state: 'open' | 'closed' | 'merged' = 'open';
-        if (pr.merged) {
-            state = 'merged';
-        } else if (pr.state === 'closed') {
-            state = 'closed';
-        }
 
         // Upsert PR with all the data
         await GitHubPR.findOneAndUpdate(
@@ -147,7 +141,7 @@ export async function handlePullRequestEvent(payload: GitHubPRPayload): Promise<
                 repoUrl: repo.html_url,
                 prUrl: pr.html_url,
                 mergedAt: pr.merged_at ? new Date(pr.merged_at) : undefined,
-                state,
+                state: 'merged',
                 labels: pr.labels.map(l => l.name),
                 filesChanged,
                 diffContent,
@@ -171,9 +165,18 @@ export async function handlePullRequestEvent(payload: GitHubPRPayload): Promise<
  * Handle Push webhook event (commits)
  */
 export async function handlePushEvent(payload: GitHubPushPayload): Promise<{ processed: number; errors: string[] }> {
-    const { commits, repository: repo } = payload;
+    const { commits, repository: repo, ref } = payload;
+    const defaultBranch = repo.default_branch || 'main'; // Fallback to main if undefined
 
-    logger.info(`Processing push event with ${commits.length} commits`);
+    logger.info(`Processing push event with ${commits.length} commits on ref: ${ref}`);
+
+    // STRICT FILTER: Only process pushes to default branch
+    // ref is typically "refs/heads/branch-name"
+    const expectedRef = `refs/heads/${defaultBranch}`;
+    if (ref !== expectedRef) {
+        logger.info(`Skipping push to non-default branch: ${ref} (default: ${defaultBranch})`);
+        return { processed: 0, errors: [] };
+    }
 
     if (commits.length === 0) {
         return { processed: 0, errors: [] };
@@ -616,15 +619,18 @@ export async function fetchPRFiles(
     }
 }
 
+import { ProjectProfile } from '../models/index.js';
+import { updateProjectProfile } from './projectService.js';
+
 /**
  * Sync PRs from a repository (supports pagination)
- * @param limit - Maximum number of PRs to sync. 0 means fetch all PRs.
  */
 export async function syncRepoPRs(
     owner: string,
     repo: string,
     limit = 0
 ): Promise<{ processed: number; updated: number; skipped: number; errors: string[]; stoppedEarly: boolean; message: string }> {
+    // ... rest of implementation (logic is at the end of function)
     const fetchAll = limit === 0;
     logger.info(`Syncing PRs for ${owner}/${repo} (limit: ${fetchAll ? 'ALL' : limit})`);
     
@@ -690,7 +696,7 @@ export async function syncRepoPRs(
                         .filter(f => f.patch)
                         .map(f => `File: ${f.filename}\n${f.patch}`)
                         .join('\n\n')
-                        .slice(0, 8000); // 8kb limit for diff text
+                        .slice(0, 16000); // 16kb limit for RAG context (enough for AI analysis)
 
                     // Map to ingestion format
                     const ingestionData: PRIngestionData = {
@@ -760,9 +766,47 @@ export async function syncRepoPRs(
             message = `Synced ${processed} new PRs, updated ${updated} PRs, skipped ${skipped} unchanged.`;
         }
 
+        // Update project profile after sync to capture any architectural shifts
+        try {
+            await updateProjectProfile();
+        } catch (profileError) {
+            logger.warn('Sync completed but project profile update failed:', profileError);
+        }
+
         logger.info(`Sync complete: ${processed} new PRs, ${updated} updated, ${skipped} skipped, ${errors.length} errors`);
         return { processed, updated, skipped, errors, stoppedEarly, message };
     } catch (error) {
         throw error;
+    }
+}
+
+/**
+ * Fetch raw diff content for a specific PR directly from GitHub
+ */
+export async function fetchPRDiffRaw(owner: string, repo: string, prNumber: number): Promise<string> {
+    if (!env.GITHUB_TOKEN) {
+        throw new Error('GITHUB_TOKEN not configured');
+    }
+
+    logger.info(`Fetching raw diff for ${owner}/${repo} PR #${prNumber}`);
+    const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`;
+    
+    try {
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `token ${env.GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3.diff',
+                'User-Agent': 'code-companion-api',
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`GitHub API error: ${response.status}`);
+        }
+        
+        return await response.text();
+    } catch (error) {
+        logger.error(`Failed to fetch raw diff for PR #${prNumber}:`, error);
+        throw new Error(`Could not fetch diff from GitHub: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
