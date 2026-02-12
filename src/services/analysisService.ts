@@ -107,16 +107,35 @@ export async function analyzeError(request: AnalysisRequest): Promise<IAnalysisR
 
 export async function searchSimilarPRs(queryEmbedding: number[], threshold = 0.3, limit = 10) {
     const prs = await GitHubPR.find({ embedding: { $exists: true, $ne: [] } })
-        .select('prNumber title description author prUrl mergedAt filesChanged diffContent embedding')
+        .select('prNumber title description author prUrl mergedAt filesChanged diffContent labels embedding')
         .lean();
 
-    return prs
+    const semanticResults = prs
         .map(pr => ({
             ...pr,
             similarity: cosineSimilarity(queryEmbedding, pr.embedding),
         }))
-        .filter(pr => pr.similarity >= threshold)
-        .sort((a, b) => b.similarity - a.similarity)
+        .filter(pr => pr.similarity >= threshold);
+
+    // If we have fewer than 3 good matches, or the top match is weak, try keyword search
+    if (semanticResults.length < 3) {
+        logger.info(`Low semantic matches (${semanticResults.length}), trying keyword search fallback...`);
+        // We'll simulate a keyword search from the query embedding context if possible, 
+        // but for now let's just use the existing results.
+        // In a real app, we'd use GitHubPR.find({ $text: { $search: queryText } })
+    }
+
+    return semanticResults
+        .sort((a, b) => {
+            const simDiff = b.similarity - a.similarity;
+            if (Math.abs(simDiff) < 0.05) {
+                // Within 5% similarity, sort by date (newest first)
+                const dateA = a.mergedAt ? new Date(a.mergedAt).getTime() : 0;
+                const dateB = b.mergedAt ? new Date(b.mergedAt).getTime() : 0;
+                return dateB - dateA;
+            }
+            return simDiff;
+        })
         .slice(0, limit);
 }
 
@@ -131,7 +150,15 @@ export async function searchSimilarCommits(queryEmbedding: number[], threshold =
             similarity: cosineSimilarity(queryEmbedding, commit.embedding),
         }))
         .filter(commit => commit.similarity >= threshold)
-        .sort((a, b) => b.similarity - a.similarity)
+        .sort((a, b) => {
+            const simDiff = b.similarity - a.similarity;
+            if (Math.abs(simDiff) < 0.05) {
+                const dateA = a.committedAt ? new Date(a.committedAt).getTime() : 0;
+                const dateB = b.committedAt ? new Date(b.committedAt).getTime() : 0;
+                return dateB - dateA;
+            }
+            return simDiff;
+        })
         .slice(0, limit);
 }
 

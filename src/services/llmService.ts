@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import type { IAnalysisResult, InputType } from '../models/index.js';
+import { getProjectContext } from './projectService.js';
 
 let genAI: GoogleGenerativeAI | null = null;
 
@@ -22,9 +23,15 @@ export interface MatchedPR {
     author: string;
     prUrl: string;
     mergedAt?: Date;
-    filesChanged: Array<{ path: string }>;
+    filesChanged: Array<{ 
+        path: string;
+        additions?: number;
+        deletions?: number;
+        status?: 'modified' | 'added' | 'deleted';
+    }>;
     similarity: number;
     diffContent?: string;
+    labels?: string[];
 }
 
 export interface MatchedCommit {
@@ -59,14 +66,15 @@ export async function analyzeWithLLM(
     logger.info('Analyzing with LLM...');
     logger.debug(`Matched PRs: ${matchedPRs.length}, Commits: ${matchedCommits.length}, Tickets: ${matchedTickets.length}`);
 
-    const context = buildContext(matchedPRs, matchedCommits, matchedTickets);
+    const projectContext = await getProjectContext();
+    const context = buildContext(matchedPRs, matchedCommits, matchedTickets, projectContext);
     const systemPrompt = getSystemPrompt();
     const userPrompt = getUserPrompt(inputText, inputType, context);
 
     try {
         const ai = getGenAI();
         const model = ai.getGenerativeModel({
-            model: 'gemini-1.5-flash',
+            model: env.GEMINI_MODEL,
             generationConfig: {
                 responseMimeType: 'application/json',
             },
@@ -122,7 +130,8 @@ export async function* analyzeWithLLMStream(
     let userContent = inputText;
 
     if (isFirstTurn) {
-        const context = buildContext(matchedPRs, matchedCommits, matchedTickets);
+        const projectContext = await getProjectContext();
+        const context = buildContext(matchedPRs, matchedCommits, matchedTickets, projectContext);
         userContent = getUserPrompt(inputText, inputType, context);
     } else {
         // For follow-ups, we don't re-inject the massive context, assuming it's in history
@@ -133,9 +142,8 @@ export async function* analyzeWithLLMStream(
 
     try {
         const ai = getGenAI();
-        // Use gemini-pro for better availability
         const model = ai.getGenerativeModel({
-            model: 'gemini-pro',
+            model: env.GEMINI_MODEL,
         });
 
         // Construct history for startChat
@@ -188,7 +196,8 @@ export async function* analyzeWithLLMStream(
 function buildContext(
     matchedPRs: MatchedPR[],
     matchedCommits: MatchedCommit[],
-    matchedTickets: MatchedTicket[]
+    matchedTickets: MatchedTicket[],
+    projectContext: string = ''
 ): string {
     const prContext = matchedPRs.length > 0
         ? matchedPRs.map(pr => {
@@ -227,39 +236,51 @@ function buildContext(
         : 'No matching tickets found';
 
     return `
-## Matched Pull Requests (by semantic similarity):
-${prContext}
+${projectContext}
 
+# >>> DYNAMIC KNOWLEDGE BASE SEARCH RESULTS <<<
+# These items were retrieved using semantic vector search from your developer database.
+# Use these to COMPARE and DERIVE the best implementation path.
+
+## Matched Pull Requests:
+${prContext}
+ 
 ## Matched Commits:
 ${commitContext}
-
+ 
 ## Related Jira Tickets:
 ${ticketContext}
+# >>> END OF KNOWLEDGE BASE CONTEXT <<<
 `;
 }
 
 function getSystemPrompt(): string {
     return `You are a friendly and helpful senior software engineer named "CodeCompanion". You're analyzing bug reports and errors for a developer. Based on the user's input and the semantically matched code changes from the repository, provide a comprehensive analysis.
 
+## Agentic Intelligence Core:
+- You have direct read access to a **Dynamic Knowledge Base** of historical Pull Requests, Commits, and Jira tickets for this repository.
+- **Comparative Analysis**: Always compare multiple matched items if they exist. If PR #1 and PR #2 both touch similar logic, identify which one is a "refactor" vs a "bug fix" and which pattern is more applicable now.
+- **Retrieve the Best Approach**: Your goal is not just to find similar code, but to derive the *best* technical approach by synthesizing patterns from the most successful past changes.
+- **Agentic Grounding**: Use phrases like "I've queried the database and found..." or "Comparing these three historical fixes, I recommend..." to show you are actively using the repository's history as your source of truth.
+
 ## Your Personality:
-- Be warm, encouraging, and conversational - like a helpful colleague
-- Use "I" and speak directly to the user with "you"
-- Be empathetic about their frustration with bugs
-- Celebrate when you find solutions
-- Use casual but professional language
+- You are a Senior Staff Engineer / Architect named "CodeCompanion".
+- You are highly technical, precise, and authoritative yet helpful.
+- Speak directly to the developer, using "I" for your analysis and "you" for their actions.
 
 ## Analysis Guidelines:
-1. **Analyze Git Diffs**: When diff content is provided, examine the actual code changes to understand:
-   - What specific code patterns were changed
-   - Why these changes were made (the reasoning behind the fix)
-   - What best practices are demonstrated in the changes
+1. **Synthesize Git Diffs**: When diff content is provided, perform a deep dive into the code:
+   - Compare the "before" and "after" patterns across all matched PRs.
+   - Identify the "Golden Path" — the cleanest, most robust way this problem has been solved before.
+   - Note any technical debt or pitfalls mentioned in PR descriptions that were avoided.
 
-2. **Root Cause Analysis**: Explain the technical root cause based on:
-   - The error/issue pattern described
-   - Evidence from matched PR diffs showing how similar issues were resolved
-   - The specific code constructs that caused the problem
+2. **Comparative Root Cause**: Explain the technical root cause by triangulating:
+   - The current error/report.
+   - How similar logic failed in the past (based on matched items).
+   - Why the proposed fix is superior to other potential approaches.
 
-3. **Best Practices**: Identify coding best practices demonstrated in the matched PRs that can help prevent similar issues.
+3. **High-Fidelity Fixes**: Provide code snippets in the fixSuggestion field that are production-ready, following the best patterns found in the "Golden Path".
+4. **Contextual Relevance**: For every matched item, explain exactly how it "connects" to the current issue and what specific lesson was learned from it.
 
 Your response MUST be valid JSON with this exact structure:
 {
@@ -338,18 +359,18 @@ function getStreamingSystemPrompt(): string {
 - Use Markdown formatting for readability.
 
 ## Your Task:
-1. **Analyze** the user's issue and the provided repository context (matched PRs, commits, tickets).
-2. **Explain** the root cause clearly.
-3. **Reference** specific PRs (e.g., "PR #123") when they provide evidence or solutions.
-4. **Suggest** a fix based on the patterns found.
+1. **Query & Analyze**: Synthesize the repository context (PRs, commits, tickets) to find the most relevant historical fixes.
+2. **Compare Patterns**: If there are multiple matches, compare their approaches and identify the most robust one.
+3. **Explain the Architecture**: Focus on the *why* and the *how*. Reference specific PRs (e.g., "PR #123") as evidence for your recommendation.
+4. **Prescribe a Fix**: Suggest a definitive implementation path based on the "best approach" retrieved from the data.
 
 Please format your response in clear sections using Markdown:
-- **Summary**: A concise overview of the issue.
-- **Root Cause Analysis**: Why this is happening, referencing code patterns.
-- **Proposed Solution**: Step-by-step implementation guide.
-- **Relevant Changes**: Discuss how the matched PRs/commits relate to this issue.
+- **Executive Summary**: A concise overview of the issue and your findings from the knowledge base.
+- **Comparative Analysis**: How different past changes relate to this issue, and why one approach might be better than another.
+- **Recommended Implementation**: A definitive, step-by-step guide with code blocks.
+- **Evidence & Context**: Deep dive into the matched PRs/commits that informed your decision.
 
-Do NOT output JSON. Output natural language Markdown.`;
+Do NOT output JSON. Output natural language Markdown. Always include code blocks for fix suggestions.`;
 }
 
 function getUserPrompt(inputText: string, inputType: InputType, context: string): string {
@@ -359,7 +380,9 @@ ${inputText}
 ## Repository Context:
 ${context}
 
-Analyze this and provide your response as valid JSON.`;
+Analyze the user input against the repository context. If multiple PRs or commits are found, compare their technical approaches. Derive and recommend the most robust "best approach" for the current issue.
+
+Provide your response as valid JSON.`;
 }
 
 function buildFallbackAnalysis(
@@ -406,11 +429,15 @@ Don't give up! Sometimes bugs just need a fresh set of eyes. Let me know if you'
         relatedPRs: matchedPRs.map(pr => ({
             prNumber: pr.prNumber,
             title: pr.title,
+            description: pr.description,
             author: pr.author,
             url: pr.prUrl,
             mergedAt: pr.mergedAt?.toISOString(),
             relevanceScore: pr.similarity,
             filesImpacted: pr.filesChanged?.map(f => f.path) || [],
+            filesChanged: pr.filesChanged || [],
+            diffContent: pr.diffContent,
+            labels: pr.labels,
         })),
         relatedCommits: matchedCommits.map(c => ({
             sha: c.sha,
@@ -482,7 +509,7 @@ Be concise but thorough. Format your response in markdown.`;
     try {
         const ai = getGenAI();
         const model = ai.getGenerativeModel({
-            model: 'gemini-1.5-flash',
+            model: env.GEMINI_MODEL,
         });
 
         const result = await model.generateContent(prompt);
@@ -525,7 +552,7 @@ Be concise and practical. Format your response in markdown with clear sections.`
     try {
         const ai = getGenAI();
         const model = ai.getGenerativeModel({
-            model: 'gemini-1.5-flash',
+            model: env.GEMINI_MODEL,
         });
 
         const result = await model.generateContent(prompt);

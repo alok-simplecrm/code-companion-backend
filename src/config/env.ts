@@ -16,6 +16,7 @@ const envSchema = z.object({
     GOOGLE_AI_API_KEY: isProduction
         ? z.string().min(1, 'GOOGLE_AI_API_KEY is required in production')
         : z.string().optional(),
+    GEMINI_MODEL: z.string().default('gemini-flash-latest'),
     FRONTEND_URL: z.string().default('http://localhost:5173'),
     
     // Allowed repositories (comma-separated URLs)

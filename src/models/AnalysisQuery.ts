@@ -15,11 +15,20 @@ export interface IAnalysisResult {
     relatedPRs: Array<{
         prNumber: number;
         title: string;
+        description?: string;
         author: string;
         url: string;
         mergedAt?: string;
         relevanceScore: number;
         filesImpacted: string[];
+        filesChanged?: Array<{
+            path: string;
+            additions?: number;
+            deletions?: number;
+            status?: 'modified' | 'added' | 'deleted';
+        }>;
+        diffContent?: string;
+        labels?: string[];
         whyRelevant?: string;
     }>;
     relatedCommits: Array<{
