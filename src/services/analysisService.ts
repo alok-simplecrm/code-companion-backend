@@ -1,4 +1,4 @@
-import { GitHubPR, GitHubCommit, JiraTicket, AnalysisQuery, type InputType, type IAnalysisResult } from '../models/index.js';
+import { GitHubPR, GitHubCommit, JiraTicket, AnalysisQuery, type InputType, type IAnalysisResult, type IFileChange } from '../models/index.js';
 import { generateEmbedding, cosineSimilarity } from './embeddingService.js';
 import { analyzeWithLLM } from './llmService.js';
 import { logger } from '../utils/logger.js';
@@ -9,6 +9,38 @@ export interface DataAvailability {
     commitCount: number;
     ticketCount: number;
     message: string;
+}
+
+export interface PRSearchResult {
+    prNumber: number;
+    title: string;
+    description?: string;
+    author: string;
+    prUrl: string;
+    mergedAt?: Date;
+    filesChanged: IFileChange[];
+    diffContent?: string;
+    labels: string[];
+    similarity: number;
+}
+
+export interface CommitSearchResult {
+    sha: string;
+    message: string;
+    author: string;
+    commitUrl: string;
+    committedAt: Date;
+    filesChanged: IFileChange[];
+    similarity: number;
+}
+
+export interface TicketSearchResult {
+    ticketKey: string;
+    title: string;
+    status: string;
+    priority?: string;
+    ticketUrl: string;
+    similarity: number;
 }
 
 /**
@@ -105,7 +137,7 @@ export async function analyzeError(request: AnalysisRequest): Promise<IAnalysisR
     return analysis;
 }
 
-export async function searchSimilarPRs(queryEmbedding: number[], threshold = 0.3, limit = 10) {
+export async function searchSimilarPRs(queryEmbedding: number[], threshold = 0.3, limit = 10): Promise<PRSearchResult[]> {
     const prs = await GitHubPR.find({ embedding: { $exists: true, $ne: [] } })
         .select('prNumber title description author prUrl mergedAt filesChanged diffContent labels embedding')
         .lean();
@@ -139,7 +171,7 @@ export async function searchSimilarPRs(queryEmbedding: number[], threshold = 0.3
         .slice(0, limit);
 }
 
-export async function searchSimilarCommits(queryEmbedding: number[], threshold = 0.3, limit = 10) {
+export async function searchSimilarCommits(queryEmbedding: number[], threshold = 0.3, limit = 10): Promise<CommitSearchResult[]> {
     const commits = await GitHubCommit.find({ embedding: { $exists: true, $ne: [] } })
         .select('sha message author commitUrl committedAt filesChanged embedding')
         .lean();
@@ -162,7 +194,7 @@ export async function searchSimilarCommits(queryEmbedding: number[], threshold =
         .slice(0, limit);
 }
 
-export async function searchSimilarTickets(queryEmbedding: number[], threshold = 0.3, limit = 5) {
+export async function searchSimilarTickets(queryEmbedding: number[], threshold = 0.3, limit = 5): Promise<TicketSearchResult[]> {
     const tickets = await JiraTicket.find({ embedding: { $exists: true, $ne: [] } })
         .select('ticketKey title status priority ticketUrl embedding')
         .lean();

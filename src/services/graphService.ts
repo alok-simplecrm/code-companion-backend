@@ -94,7 +94,7 @@ Tickets: ${tickets.map(t => `${t.ticketKey}: ${t.title}`).join(', ') || 'None'}
 /**
  * Initialize and return the LangGraph agent
  */
-export function createAgent() {
+export function createAgent(): any {
   const workflow = new StateGraph(AgentState)
     .addNode("retrieve", retrieveNode)
     .addNode("analyze", analyzeNode)
